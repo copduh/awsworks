@@ -1,0 +1,314 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  EC2 backend stack for Sprintly. Creates an Auto Scaling Group behind an ALB,
+  PostgreSQL RDS, Secrets Manager credentials, and CodeDeploy resources for
+  backend artifact deployment.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  DBUsername:
+    Type: String
+    Default: postgres
+  DBPassword:
+    Type: String
+    NoEcho: true
+  JWTSecret:
+    Type: String
+    NoEcho: true
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  DesiredCapacity:
+    Type: Number
+    Default: 2
+  MaxSize:
+    Type: Number
+    Default: 4
+  MinSize:
+    Type: Number
+    Default: 2
+
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+Resources:
+  BackendInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      Policies:
+        - PolicyName: sprintly-instance-secrets-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: '*'
+
+  BackendInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BackendInstanceRole
+
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow ALB to reach backend instances
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow public access to backend ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow backend to connect to PostgreSQL
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref BackendSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+
+  BackendLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: sprintly-backend-alb
+      Scheme: internet-facing
+      Subnets: !Ref PublicSubnetIds
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Type: application
+
+  BackendTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: sprintly-backend-tg
+      Port: 8080
+      Protocol: HTTP
+      TargetType: instance
+      VpcId: !Ref VpcId
+      HealthCheckPath: /actuator/health
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  BackendListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref BackendLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref BackendTargetGroup
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for Sprintly PostgreSQL
+      SubnetIds: !Ref PrivateSubnetIds
+      DBSubnetGroupName: sprintly-db-subnet-group
+
+  SprintlyDBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: sprintly-db-password
+      Description: Sprintly database password
+      SecretString: !Ref DBPassword
+
+  SprintlyJWTSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: sprintly-jwt-secret
+      Description: Sprintly JWT secret
+      SecretString: !Ref JWTSecret
+
+  SprintlyDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBName: sprintly
+      AllocatedStorage: 20
+      StorageType: gp3
+      DBInstanceClass: db.t4g.micro
+      Engine: postgres
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 7
+      StorageEncrypted: true
+      DeletionProtection: false
+
+  BackendLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: sprintly-backend-launch-template
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt BackendInstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref BackendSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            yum update -y
+            yum install -y java-21-amazon-corretto-headless ruby wget aws-cli
+            cd /tmp
+            wget https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install
+            chmod +x ./install
+            ./install auto
+            systemctl enable codedeploy-agent
+            systemctl start codedeploy-agent
+            mkdir -p /opt/sprintly
+            cat > /opt/sprintly/sprintly.env <<'EOF'
+            SPRING_DATASOURCE_URL=jdbc:postgresql://${SprintlyDatabase.Endpoint.Address}:5432/sprintly
+            SPRING_DATASOURCE_USERNAME=postgres
+            SPRING_DATASOURCE_PASSWORD_SECRET_NAME=sprintly-db-password
+            JWT_SECRET_NAME=sprintly-jwt-secret
+            AWS_REGION=${AWS::Region}
+            EOF
+
+  BackendAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: sprintly-backend-asg
+      LaunchTemplate:
+        LaunchTemplateId: !Ref BackendLaunchTemplate
+        Version: !GetAtt BackendLaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinSize
+      MaxSize: !Ref MaxSize
+      DesiredCapacity: !Ref DesiredCapacity
+      VPCZoneIdentifier: !Ref PrivateSubnetIds
+      TargetGroupARNs:
+        - !Ref BackendTargetGroup
+      Tags:
+        - Key: Name
+          Value: sprintly-backend-instance
+          PropagateAtLaunch: true
+
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: sprintly-backend-codedeploy
+      ComputePlatform: Server
+
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: sprintly-backend-deployment-group
+      ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
+      AutoScalingGroups:
+        - !Ref BackendAutoScalingGroup
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+
+Outputs:
+  BackendLoadBalancerDns:
+    Description: Backend application endpoint
+    Value: !GetAtt BackendLoadBalancer.DNSName
+    Export:
+      Name: sprintly-backend-service-url
+
+  BackendAutoScalingGroupName:
+    Description: Name of the backend Auto Scaling Group
+    Value: !Ref BackendAutoScalingGroup
+    Export:
+      Name: sprintly-backend-asg-name
+
+  CodeDeployApplicationName:
+    Description: Backend CodeDeploy application name
+    Value: !Ref CodeDeployApplication
+    Export:
+      Name: sprintly-codedeploy-application-name
+
+  CodeDeployDeploymentGroupName:
+    Description: Backend CodeDeploy deployment group name
+    Value: !Ref CodeDeployDeploymentGroup
+    Export:
+      Name: sprintly-codedeploy-deployment-group-name
+
+  DBEndpointAddress:
+    Description: PostgreSQL endpoint address
+    Value: !GetAtt SprintlyDatabase.Endpoint.Address
+    Export:
+      Name: sprintly-db-endpoint
+
+  DBSecretArn:
+    Description: RDS password secret ARN
+    Value: !Ref SprintlyDBSecret
+    Export:
+      Name: sprintly-db-password-secret-arn
+
+  JWTSecretArn:
+    Description: JWT secret ARN
+    Value: !Ref SprintlyJWTSecret
+    Export:
+      Name: sprintly-jwt-secret-arn
