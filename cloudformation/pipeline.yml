@@ -139,7 +139,7 @@ Resources:
             Value: !Ref CloudFrontDistributionId
 
           - Name: BACKEND_API_URL
-            Value: !Sub "http://${!ImportValue sprintly-backend-service-url}"
+            Value: !Join ["", ["http://", !ImportValue sprintly-backend-service-url]]
 
           - Name: DB_USER
             Value: !Ref DBUser
