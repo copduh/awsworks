@@ -1,0 +1,51 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto21  # ← FIX: Changed from corretto17
+      nodejs: 18
+    commands:
+      - echo "Using AWS CodeBuild managed runtimes"
+
+  pre_build:
+    commands:
+      - echo Build started on `date`
+
+  build:
+    commands:
+      # Backend
+      - echo "Building backend"
+      - cd Backend
+      - mvn clean package -DskipTests
+      - cd ..
+      - mkdir -p build_backend
+      - cp Backend/target/*.jar build_backend/app.jar
+
+      # Frontend
+      - echo "Building frontend"
+      - export VITE_API_URL=$BACKEND_API_URL
+      - cd Frontend
+      - npm install
+      - npm run build
+      - cd ..
+
+      # Deploy files
+      - mkdir -p build_backend/scripts
+      - cp appspec.yml build_backend/
+      - cp -r scripts build_backend/ || true
+
+  post_build:
+    commands:
+      - echo "Syncing frontend to S3"
+      - aws s3 sync Frontend/dist s3://$FRONTEND_BUCKET_NAME --delete
+      - echo "Invalidating CloudFront cache"
+      - aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_DISTRIBUTION_ID --paths "/*"
+      - echo Build completed on `date`
+
+artifacts:
+  files:
+    - app.jar
+    - appspec.yml
+    - scripts/**/*
+  base-directory: build_backend
