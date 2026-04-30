@@ -1,0 +1,22 @@
+
+spring:
+  application:
+      name: sprintly
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+    show-sql: ${SHOW_SQL:true}
+
+server:
+  port: ${PORT:8080}
+
+jwt:
+  secret: ${JWT_SECRET:9a4f4e354567f1b9f6b9f6b9f6b9f6b9f6b9f6b9f6b9f6b9f6b9f6b9f6b9f6b9}
+  expiration: ${JWT_EXPIRATION:86400000}
