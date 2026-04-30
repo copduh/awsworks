@@ -1,0 +1,333 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Static frontend hosting for Sprintly using S3 and CloudFront (OAC-based secure access).
+
+Resources:
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub sprintly-frontend-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+
+  # -----------------------------
+  # CloudFront Origin Access Control (NEW APPROACH)
+  # -----------------------------
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: sprintly-frontend-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # -----------------------------
+  # CloudFront Distribution
+  # -----------------------------
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: Sprintly frontend distribution
+        Enabled: true
+        DefaultRootObject: index.html
+
+        Origins:
+          - Id: sprintlyFrontendOrigin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig: {}
+
+        DefaultCacheBehavior:
+          TargetOriginId: sprintlyFrontendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+
+        PriceClass: PriceClass_100
+
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+        HttpVersion: http2
+
+  # -----------------------------
+  # Bucket Policy (IMPORTANT FIX)
+  # -----------------------------
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontAccessOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+
+Outputs:
+
+  FrontendBucketName:
+    Description: Static frontend S3 bucket name
+    Value: !Ref FrontendBucket
+    Export:
+      Name: sprintly-frontend-bucket-name
+
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID
+    Value: !Ref FrontendDistribution
+    Export:
+      Name: sprintly-frontend-cloudfront-id
+
+  CloudFrontDomainName:
+    Description: CloudFront domain name
+    Value: !GetAtt FrontendDistribution.DomainName
+    Export:
+      Name: sprintly-frontend-distribution-domain
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Static frontend hosting for Sprintly using S3 and CloudFront (OAC-based secure access).
+
+Resources:
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub sprintly-frontend-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+
+  # -----------------------------
+  # CloudFront Origin Access Control (NEW APPROACH)
+  # -----------------------------
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: sprintly-frontend-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # -----------------------------
+  # CloudFront Distribution
+  # -----------------------------
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: Sprintly frontend distribution
+        Enabled: true
+        DefaultRootObject: index.html
+
+        Origins:
+          - Id: sprintlyFrontendOrigin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig: {}
+
+        DefaultCacheBehavior:
+          TargetOriginId: sprintlyFrontendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+
+        PriceClass: PriceClass_100
+
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+        HttpVersion: http2
+
+  # -----------------------------
+  # Bucket Policy (IMPORTANT FIX)
+  # -----------------------------
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontAccessOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+
+Outputs:
+
+  FrontendBucketName:
+    Description: Static frontend S3 bucket name
+    Value: !Ref FrontendBucket
+    Export:
+      Name: sprintly-frontend-bucket-name
+
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID
+    Value: !Ref FrontendDistribution
+    Export:
+      Name: sprintly-frontend-cloudfront-id
+
+  CloudFrontDomainName:
+    Description: CloudFront domain name
+    Value: !GetAtt FrontendDistribution.DomainName
+    Export:
+      Name: sprintly-frontend-distribution-domain
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Static frontend hosting for Sprintly using S3 and CloudFront (OAC-based secure access).
+
+Resources:
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub sprintly-frontend-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+
+  # -----------------------------
+  # CloudFront Origin Access Control (NEW APPROACH)
+  # -----------------------------
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: sprintly-frontend-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # -----------------------------
+  # CloudFront Distribution
+  # -----------------------------
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: Sprintly frontend distribution
+        Enabled: true
+        DefaultRootObject: index.html
+
+        Origins:
+          - Id: sprintlyFrontendOrigin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig: {}
+
+        DefaultCacheBehavior:
+          TargetOriginId: sprintlyFrontendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+
+        PriceClass: PriceClass_100
+
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+        HttpVersion: http2
+
+  # -----------------------------
+  # Bucket Policy (IMPORTANT FIX)
+  # -----------------------------
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontAccessOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+
+Outputs:
+
+  FrontendBucketName:
+    Description: Static frontend S3 bucket name
+    Value: !Ref FrontendBucket
+    Export:
+      Name: sprintly-frontend-bucket-name
+
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID
+    Value: !Ref FrontendDistribution
+    Export:
+      Name: sprintly-frontend-cloudfront-id
+
+  CloudFrontDomainName:
+    Description: CloudFront domain name
+    Value: !GetAtt FrontendDistribution.DomainName
+    Export:
+      Name: sprintly-frontend-distribution-domain
